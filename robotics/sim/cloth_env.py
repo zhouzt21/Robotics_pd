@@ -129,32 +129,32 @@ class PickClothEnv(BaseEnv):
         return self.compute_dense_reward(obs=obs, action=action, info=info)
 
     def _load_scene(self, options: dict):
-        # self.table_scene = TableSceneBuilder(env=self, robot_init_qpos_noise=self.robot_init_qpos_noise)
-        # self.table_scene.build()
+        self.table_scene = TableSceneBuilder(env=self, robot_init_qpos_noise=self.robot_init_qpos_noise)
+        self.table_scene.build()
 
-        # b = self.scene.create_actor_builder()
-        # b.add_multiple_convex_collisions_from_file(
-        #     "assets/banana/collision_meshes/collision.obj"
-        # )
-        # b.add_visual_from_file(
-        #     "assets/banana/visual_meshes/visual.glb"
-        # )
-        # banana = b.build(name="banana")
-        # banana.set_pose(sapien.Pose(p=[0.1, 0, 0.02]))
-        # banana._objs[0].add_component(
-        #     PDBodyComponent.from_physx_shape(
-        #         banana._objs[0].find_component_by_type(
-        #             sapien.pysapien.physx.PhysxRigidDynamicComponent
-        #         ),
-        #         grid_size=1e-3,
-        #     )
-        # )
-        # self.banana = banana
+        b = self.scene.create_actor_builder()
+        b.add_multiple_convex_collisions_from_file(
+            "assets/banana/collision_meshes/collision.obj"
+        )
+        b.add_visual_from_file(
+            "assets/banana/visual_meshes/visual.glb"
+        )
+        banana = b.build(name="banana")
+        banana.set_pose(sapien.Pose(p=[0.1, 0, 0.02]))
+        banana._objs[0].add_component(
+            PDBodyComponent.from_physx_shape(
+                banana._objs[0].find_component_by_type(
+                    sapien.pysapien.physx.PhysxRigidDynamicComponent
+                ),
+                grid_size=1e-3,
+            )
+        )
+        self.banana = banana
 
         for s in self.scene.sub_scenes:
             for e in s.entities:
-                if e.name not in self.interaction_links:
-                    continue
+                # if e.name not in self.interaction_links:
+                    # continue
                 body = e.find_component_by_type(sapien.pysapien.physx.PhysxRigidBodyComponent)
                 e.add_component(PDBodyComponent.from_physx_shape(body, grid_size=3e-3))
 

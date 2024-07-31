@@ -18,6 +18,8 @@ from sapienpd.pd_config import PDConfig
 from sapienpd.pd_defs import ShapeTypes
 from sapienpd.pd_system import PDSystem
 
+from pdsimulator import PDSimulator
+
 # pip install https://github.com/fbxiang/mesh2nvdb/releases/download/nightly/mesh2nvdb-0.1-cp36-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 # pip install git+https://github.com/Rabbit-Hu/sapienpd
 
@@ -42,47 +44,42 @@ class FEMConfig:   # config for cloth entity
     max_constraints: int = 1 << 20
     max_constraint_total_size: int = 1 << 20
     max_colliders: int = 1 << 20
-
+   
+    # solver config (new)
+    sim_freq = 500
+    pd_iterations = 20
+   
     # physics config
     collision_margin = 0.2e-3
     collision_sphere_radius = 1.6e-3
     max_particle_velocity = 0.1
-    
 
-@register_env("PickCloth-v0")
-class PickClothEnv(BaseEnv):
-    SUPPORTED_ROBOTS = ["panda"]
-    agent: Panda
+@register_env("PDCloth-v0")
+class PDClothEnv(PDSimulator):
 
-    @property
-    def _default_sensor_configs(self):
-        pose = look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
-        return [CameraConfig("base_camera", pose, 128, 128, np.pi / 2, 0.01, 100)]
-
-    def __init__(
+    def __init__(   #TODO: revise init()
         self,
         *args,
-
         fem_cfg: FEMConfig | dict = FEMConfig(),
-        interaction_links=("panda_rightfinger", "panda_leftfinger"),
-        cloth_size=(0.2, 0.2),
-        cloth_resolution=(51, 51),
-        cloth_init_pose=sapien.Pose([0.0, -0.1, 0.1]),
-        robot_init_qpos_noise=0,
+        control_mode: str = None,
+        render_mode: str = None,
         **kwargs,
     ):
-        self.robot_init_qpos_noise = robot_init_qpos_noise
-        self.interaction_links = set(interaction_links)
-        self.cloth_size = cloth_size
-        self.cloth_resolution = cloth_resolution
-        self.cloth_init_pose = cloth_init_pose
+        #TODO: need to add to entity config (change into _load_scene)
+        self.interaction_links=("panda_rightfinger", "panda_leftfinger","panda_link7",
+                        "panda_link6","panda_link5","panda_link4","panda_link3",
+                        "panda_link2","panda_link1","panda_link0")
+        self.robot_init_qpos_noise=0
+        self.cloth_init_pose=sapien.Pose([-0.1, -0.1, 1.2])
+        self.cloth_size=(0.2, 0.2)
+        self.cloth_resolution=(21,21) #(51, 51)    
 
         if isinstance(fem_cfg, FEMConfig):
             self._fem_cfg = fem_cfg
         else:
             self._fem_cfg = dacite.from_dict(data_class=FEMConfig, data=fem_cfg, config=dacite.Config(strict=True))
 
-        super().__init__(*args, robot_uids=robot_uids, **kwargs)
+        super().__init__(*args, render_mode=render_mode, control_mode=control_mode, **kwargs)   #TODO: revise the init call
 
         assert (
             self._fem_cfg.sim_freq // self.sim_freq * self.sim_freq == self._fem_cfg.sim_freq
@@ -104,9 +101,9 @@ class PickClothEnv(BaseEnv):
         self._pd_config.gravity = self.sim_cfg.scene_cfg.gravity
 
         self._pd_system = PDSystem(self._pd_config, self._fem_cfg.warp_device)
-        assert len(self.scene.sub_scenes) == 1, "currently only single scene is supported"
+        assert len(self._scene.sub_scenes) == 1, "currently only single scene is supported"
 
-        for s in self.scene.sub_scenes:
+        for s in self._scene.sub_scenes:
             s.add_system(self._pd_system)
 
         self._pd_ground = PDBodyComponent(
@@ -116,7 +113,7 @@ class PickClothEnv(BaseEnv):
         )
         entity = sapien.Entity()
         entity.add_component(self._pd_ground)
-        self.scene.sub_scenes[0].add_entity(entity)
+        self._scene.sub_scenes[0].add_entity(entity)
 
     def compute_dense_reward(self, obs: Any, action: torch.Tensor, info: dict):
         return torch.zeros(self.num_envs, device=self.device)
@@ -125,32 +122,34 @@ class PickClothEnv(BaseEnv):
         return self.compute_dense_reward(obs=obs, action=action, info=info)
 
     def _load_scene(self, options: dict):
-        self.table_scene = TableSceneBuilder(env=self, robot_init_qpos_noise=self.robot_init_qpos_noise)
-        self.table_scene.build()
+        super()._load_scene()  # load basic settings
 
-        b = self.scene.create_actor_builder()
-        b.add_multiple_convex_collisions_from_file(
-            "assets/banana/collision_meshes/collision.obj"
-        )
-        b.add_visual_from_file(
-            "assets/banana/visual_meshes/visual.glb"
-        )
-        banana = b.build(name="banana")
-        banana.set_pose(sapien.Pose(p=[0.1, 0, 0.02]))
-        banana._objs[0].add_component(
-            PDBodyComponent.from_physx_shape(
-                banana._objs[0].find_component_by_type(
-                    sapien.pysapien.physx.PhysxRigidDynamicComponent
-                ),
-                grid_size=1e-3,
-            )
-        )
-        self.banana = banana
+        # self.table_scene = TableSceneBuilder(env=self, robot_init_qpos_noise=self.robot_init_qpos_noise)
+        # self.table_scene.build()
 
-        for s in self.scene.sub_scenes:
+        # b = self._scene.create_actor_builder()
+        # b.add_multiple_convex_collisions_from_file(
+        #     "assets/banana/collision_meshes/collision.obj"
+        # )
+        # b.add_visual_from_file(
+        #     "assets/banana/visual_meshes/visual.glb"
+        # )
+        # banana = b.build(name="banana")
+        # banana.set_pose(sapien.Pose(p=[0.1, 0, 0.02]))
+        # banana._objs[0].add_component(
+        #     PDBodyComponent.from_physx_shape(
+        #         banana._objs[0].find_component_by_type(
+        #             sapien.pysapien.physx.PhysxRigidDynamicComponent
+        #         ),
+        #         grid_size=1e-3,
+        #     )
+        # )
+        # self.banana = banana
+
+        for s in self._scene.sub_scenes:
             for e in s.entities:
-                # if e.name not in self.interaction_links:
-                    # continue
+                if e.name not in self.interaction_links:
+                    continue
                 body = e.find_component_by_type(sapien.pysapien.physx.PhysxRigidBodyComponent)
                 e.add_component(PDBodyComponent.from_physx_shape(body, grid_size=3e-3))
 
@@ -173,6 +172,18 @@ class PickClothEnv(BaseEnv):
             friction=0.3,
             collider_iterpolation_depth=0,
         )
+
+        near, far = 0.1, 100
+        width, height = 640, 480
+        camera = self._scene.sub_scenes[0].add_camera('main_camera', 
+                                            width=width,
+                                            height=height,
+                                            fovy=np.deg2rad(35),
+                                            near=near,
+                                            far=far,
+                                            ) 
+        camera.set_pose(sapien.Pose([0.3, 0, 0.6], [0, 0, 0, 1]))
+
         cloth_render = sapien.render.RenderCudaMeshComponent(len(vertices), 2 * len(faces))
         cloth_render.set_vertex_count(len(vertices))
         cloth_render.set_triangle_count(2 * len(faces))
@@ -183,7 +194,7 @@ class PickClothEnv(BaseEnv):
         cloth_entity.add_component(cloth_render)
         cloth_entity.set_pose(self.cloth_init_pose)
 
-        self.scene.sub_scenes[0].add_entity(cloth_entity)
+        self._scene.sub_scenes[0].add_entity(cloth_entity)
         self.cloth_comp = cloth_comp
         self.cloth_render_comp = cloth_render
 
@@ -223,10 +234,16 @@ class PickClothEnv(BaseEnv):
 
 
 def main():
-    env = PickClothEnv(render_mode="human", control_mode="pd_joint_pos")
+    env = PDClothEnv(render_mode="human", control_mode="pd_joint_pos")
     num_trajs = 0
     seed = 0
     env.reset(seed=seed)
+
+    while True:
+        env.render()
+        env.viewer.paused = True
+        env.step(None)       
+
     while True:
         print(f"Collecting trajectory {num_trajs + 1}, seed={seed}")
         code = solve(env, debug=False, vis=True)

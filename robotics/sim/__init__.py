@@ -12,6 +12,7 @@
 """
 from .engines.gpu_engine import GPUEngineConfig, GPUEngine, ensure_rigid_comp
 from .simulator import Simulator, SimulatorConfig
+from .pdsimulator import PDSimulator, PDSimConfig
 from .environ import EnvironBase
 from .sensors.camera_v2 import CameraV2, CameraConfig
 from .sensors.depth_camera import StereoDepthCamera, StereoDepthCameraConfig
