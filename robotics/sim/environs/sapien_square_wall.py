@@ -3,7 +3,7 @@ import sapien.core as sapien
 import numpy as np
 from ..environ import EnvironBase, EnvironConfig
 from .maze import MazeGame
-from robotics.sim import Simulator
+from robotics.sim import PDSimulator
 
 
 class WallConfig(EnvironConfig):
@@ -41,8 +41,8 @@ class SquaWall(EnvironBase):
         return (loc / self.MAZE_SIZE_SCALING - 0.5).astype(np.int32)
 
 
-    def _load(self, world: "Simulator"):
-        scene = world._scene
+    def _load(self, world: "PDSimulator"):
+        scene = world._scene.sub_scenes[0]  # type: sapien.Scene    
 
         self.MAZE_HEIGHT = self.config.maze_height
         self.MAZE_SIZE_SCALING = self.config.maze_size_scaling

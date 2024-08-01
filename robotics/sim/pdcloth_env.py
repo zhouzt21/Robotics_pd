@@ -12,13 +12,14 @@ from mani_skill.examples.motionplanning.panda.motionplanner import PandaArmMotio
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
 from mani_skill.utils.registration import register_env
-from mani_skill.utils.sapien_utils import look_at
-from sapienpd.pd_component import PDBodyComponent, PDClothComponent
-from sapienpd.pd_config import PDConfig
-from sapienpd.pd_defs import ShapeTypes
-from sapienpd.pd_system import PDSystem
+from robotics.sim.sapienpd.pd_component import PDBodyComponent, PDClothComponent
+from robotics.sim.sapienpd.pd_config import PDConfig
+from robotics.sim.sapienpd.pd_defs import ShapeTypes
+from robotics.sim.sapienpd.pd_system import PDSystem
 
-from pdsimulator import PDSimulator
+from robotics.sim.pdsimulator import PDSimulator, PDSimConfig
+from robotics.sim.entity import Entity
+from typing import Union
 
 # pip install https://github.com/fbxiang/mesh2nvdb/releases/download/nightly/mesh2nvdb-0.1-cp36-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 # pip install git+https://github.com/Rabbit-Hu/sapienpd
@@ -57,29 +58,25 @@ class FEMConfig:   # config for cloth entity
 @register_env("PDCloth-v0")
 class PDClothEnv(PDSimulator):
 
-    def __init__(   #TODO: revise init()
+    def __init__(  
         self,
-        *args,
-        fem_cfg: FEMConfig | dict = FEMConfig(),
-        control_mode: str = None,
-        render_mode: str = None,
-        **kwargs,
+        fem_cfg: FEMConfig | dict = FEMConfig(),  
+        env_cfg : PDSimConfig | dict = PDSimConfig(),
+        elements: dict[str, Union[Entity, dict]] = {} , 
+        cloth_init_pose: sapien.Pose = sapien.Pose([-0.1, -0.1, 1.2]),
+        cloth_size=(0.2, 0.2),
+        cloth_resolution=(21,21) #(51, 51)    
     ):
-        #TODO: need to add to entity config (change into _load_scene)
-        self.interaction_links=("panda_rightfinger", "panda_leftfinger","panda_link7",
-                        "panda_link6","panda_link5","panda_link4","panda_link3",
-                        "panda_link2","panda_link1","panda_link0")
-        self.robot_init_qpos_noise=0
-        self.cloth_init_pose=sapien.Pose([-0.1, -0.1, 1.2])
-        self.cloth_size=(0.2, 0.2)
-        self.cloth_resolution=(21,21) #(51, 51)    
+        self.cloth_init_pose= cloth_init_pose
+        self.cloth_size=cloth_size
+        self.cloth_resolution=cloth_resolution   
 
         if isinstance(fem_cfg, FEMConfig):
             self._fem_cfg = fem_cfg
         else:
             self._fem_cfg = dacite.from_dict(data_class=FEMConfig, data=fem_cfg, config=dacite.Config(strict=True))
 
-        super().__init__(*args, render_mode=render_mode, control_mode=control_mode, **kwargs)   #TODO: revise the init call
+        super().__init__(env_cfg=env_cfg, elements=elements)  
 
         assert (
             self._fem_cfg.sim_freq // self.sim_freq * self.sim_freq == self._fem_cfg.sim_freq

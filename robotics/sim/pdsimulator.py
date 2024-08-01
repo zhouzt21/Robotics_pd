@@ -1,6 +1,5 @@
 """
-Simulator built based on SAPIEN3. Already add robot agent and basic environ settings.
-think: robot need pd?
+PDSimulator built based on SAPIEN3. Add robot agent and basic environment settings.
 """
 from __future__ import annotations
 from typing import cast, Union, TYPE_CHECKING, Optional
@@ -9,24 +8,21 @@ import logging
 import numpy as np
 import sapien.core as sapien
 
+import os
+import sys
+sys.path.append(os.path.dirname((os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
 import torch
-from entity import Entity, Composite
+from robotics.sim.entity import Entity, Composite
 
 # maiskill env
 from mani_skill.agents.robots import Panda
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.examples.motionplanning.panda.motionplanner import PandaArmMotionPlanningSolver
 
-from mani_skill.utils.registration import register_env
-from mani_skill.utils.sapien_utils import look_at
-from mani_skill.utils.structs.types import SimConfig
-
 from dataclasses import dataclass
 import dacite
 
-import os
-import sys
-sys.path.append(os.path.dirname((os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import tqdm
 from robotics.cfg import Config
@@ -37,22 +33,11 @@ from sapien.utils.viewer import Viewer
 from sapien import physx
 
 from robotics.sim.sensors.sensor_cfg import CameraConfig
-from robotics.sim.engines.cpu_engine import CPUEngine
-from robotics.sim.engines.gpu_engine import GPUEngineConfig, GPUEngine
 
 if TYPE_CHECKING:
     from .robot.robot_base import Robot
     from .ros_plugins.module import ROSModule
-
-# _Engine: CPUEngine | GPUEngine | None = None
-# def get_engine() -> CPUEngine | GPUEngine:
-#     assert _Engine is not None, "Engine is not initialized. Please create a simulator first."
-#     return _Engine
-
- #replace the simulator, other module (like ros) recognize as world 
- # "sim" - origin simulator code, "clo" - clothenv code, "both" - for both
  
- #for coder to change sim config easily
 class PDSimConfig(Config):   # config for simulator 
     sim_freq: int = 500    
     shader_dir: str = "default" 
@@ -65,15 +50,26 @@ class PDSimConfig(Config):   # config for simulator
     viewer_camera: Optional[CameraConfig] = None
     viewer_id: Optional[int] = None
 
-    # engine config
-    # gpu_config: Optional[GPUEngineConfig] = None
+    # base env config 
+    render_mode: str = None
 
-    # solver config
+    # solver config (not use temporarily)
     solver_iterations: int = 50
     velocity_iterations: int = 1
     enable_pcm: bool = False
 
-    n_scenes: int = 1   # TODO: connect with sapien scene's config
+    # entity config 
+    add_ground: bool = True           
+    
+    # agent config
+    robot_uids: str ="panda"
+    control_mode: str = None
+    ros_module: Optional["ROSModule"] = None
+
+    interaction_links=("panda_rightfinger", "panda_leftfinger","panda_link7",
+                        "panda_link6","panda_link5","panda_link4","panda_link3",
+                        "panda_link2","panda_link1","panda_link0")
+    robot_init_qpos_noise: int =0   #TODO add init_pose config
 
 
 class PDSimulator(BaseEnv):
@@ -87,52 +83,45 @@ class PDSimulator(BaseEnv):
     SUPPORTED_ROBOTS = ["panda"]
     agent: Panda
     
-    def __init__(self, 
-                *args,
-                robot_uids ="panda",
-                control_mode: str = None,
-                render_mode: str = None,
-                env_cfg : PDSimConfig | dict = PDSimConfig(),
-                elements: dict[str, Union[Entity, dict]] = {},
-                add_ground: bool = True,
-                ros_module: Optional["ROSModule"] = None,
-                **kwargs,  
-    ):
-        # clo
+    def __init__(self, env_cfg : PDSimConfig | dict = PDSimConfig(), elements: dict[str, Union[Entity, dict]] = {}   ):
+         
         if isinstance(env_cfg, PDSimConfig):
             self._env_cfg = env_cfg
         else:
             self._env_cfg = dacite.from_dict(data_class=PDSimConfig, data=env_cfg, config=dacite.Config(strict=True))
         
+        self._sim_freq = env_cfg.sim_freq   #  connect (sim_freq in sim_cfg is 100 default)        
         self.shader_dir = env_cfg.shader_dir
         self.enable_shadow = env_cfg.enable_shadow
         self.contact_offset = env_cfg.contact_offset
-        self._sim_freq = env_cfg.sim_freq   #  connect (sim_freq in sim_cfg is 100 default)
-
-        self._setup_elements(elements)
-        self.add_ground = add_ground and self._if_add_ground(elements)   
-
-        # sim  
+        self.control_freq_without_robot = env_cfg.control_freq_without_robot
+        
         renderer_kwargs = {}
         self._renderer = sapien.SapienRenderer(**renderer_kwargs)
-        self._viewer: Optional[Viewer] = None  
+        self._viewer: Optional[Viewer] = None        
         self._viewer_camera = env_cfg.viewer_camera
         self._viewer_id = env_cfg.viewer_id
 
-        self.modules: list['ROSModule'] = []     
-        if ros_module is not None:
-            self.modules.append(ros_module)   
+        self._setup_elements(elements)
+        self.add_ground = env_cfg.add_ground and self._if_add_ground(elements)   
 
-        super().__init__(*args, robot_uids=robot_uids,render_mode=render_mode,control_mode=control_mode, **kwargs)           
+        self.modules: list['ROSModule'] = []     
+        if env_cfg.ros_module is not None:
+            self.modules.append(env_cfg.ros_module)   
+
+        self.interaction_links = set(env_cfg.interaction_links)
+        self.robot_init_qpos_noise= env_cfg.robot_init_qpos_noise
+
+        super().__init__(robot_uids=env_cfg.robot_uids,render_mode=env_cfg.render_mode,control_mode=env_cfg.control_mode)           
         
-        control_freq = self._control_freq = self.agent._control_freq if self.agent is not None else env_cfg.control_freq_without_robot
+        control_freq = self._control_freq = self.agent._control_freq if self.agent is not None else self.control_freq_without_robot
         if self._sim_freq % control_freq != 0:
             logging.warning(
                 f"sim_freq({self._sim_freq}) is not divisible by control_freq({control_freq}).",
             )
         self._sim_steps_per_control = self._sim_freq // control_freq
 
-        # add for ros compatibility (haven't check yet)
+        # add for ros compatibility (haven't check yet) TODO
         self.robot = self.agent 
 
         for m in self.modules:
@@ -157,14 +146,6 @@ class PDSimulator(BaseEnv):
     @property
     def dt(self):
         return self.control_timestep
-    
-    # -------------------------------------------------------------------------- #
-    # Code for setup sapien scene.
-    # -------------------------------------------------------------------------- #
-
-    def _setup_scene(self):
-        super()._setup_scene()
-        self._viewer_has_scene_updated = False
 
     # ---------------------------------------------------------------------------- #
     # Setup scene with viewer and renderer. already finished check
@@ -191,8 +172,7 @@ class PDSimulator(BaseEnv):
         self._viewer.set_camera_rpy(rpy[0], -rpy[1], -rpy[2]) # type: ignore  mysterious
 
     def _setup_viewer(self, set_scene: bool=True):
-        #TOOD: setup viewer  
-        # actually called by ''_reconfigure()''
+        # setup viewer, actually called by ''_reconfigure()''
         assert self._viewer is not None
         if set_scene:
             for s in self._scene.sub_scenes:
@@ -230,14 +210,13 @@ class PDSimulator(BaseEnv):
         self.ground = ground
         return ground
     
-    # uncompatible with _load_scene, which means it will be called before setting add_ground,
-    # but if add_ground using _if_add_ground to check, then it has no elements as input 
     def _if_add_ground(self, elements: dict[str, Union[Entity, dict]]):
         for v in elements.values():
             if hasattr(v, 'has_ground') and getattr(v, 'has_ground'):
                 return False
         return True
 
+    # uncompatible with _load_scene
     # TODO setup agent robot's sensors(change to agent's sensors)
     def _setup_elements(self, elements: dict[str, Union[Entity, dict]]):
         # robot = self.agent
@@ -260,7 +239,6 @@ class PDSimulator(BaseEnv):
             return
         entity._load(self)
         self._loaded_eneity.add(entity)
-
 
     # load ground .. (change _load() into _load_scene)  also can add other basic environ setting 
     # also load ros module (other entities are loaded in pdcloth_env.py)
