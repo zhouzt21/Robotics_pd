@@ -1,10 +1,11 @@
 import argparse
 import sapien
 import numpy as np
+import torch
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname((os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
-print(sys.path)
+
 from robotics.sim import PDSimConfig
 from robotics.sim.pdcloth_env import PDClothEnv
 from sapien import Pose
@@ -37,7 +38,9 @@ ros = ROSModule('mobile_sapien', use_sim_time=False) if args.ros else None
 
 env = PDClothEnv( env_cfg= PDSimConfig( solver_iterations=50, sim_freq=100, enable_pcm=False, ros_module=ros, 
                                        render_mode="human", control_mode="pd_joint_pos"), 
-                elements =element, cloth_init_pose=sapien.Pose([-3.79, -0.747, 1.2]))
+                elements =element,  robot_state = {"robot_base_pose":(torch.FloatTensor([5, 0]), torch.FloatTensor([1.72])),
+                                                   "robot_root_pose": Pose([2.5, 1.0, 0.5], [1, 0, 0, 0])
+                                                   })
     
 env.reset()
 
